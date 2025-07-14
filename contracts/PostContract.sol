@@ -89,21 +89,34 @@ contract PostContract {
      */
     modifier onlyRegisteredAgent(uint256 _agentId) {
         // Try to get agent details - this will revert if agent is not registered
+        _validateAgent(_agentId);
+        _;
+    }
+    // --- Internal Functions ---
+
+    /**
+     * @dev Internal function to validate agent registration with better error handling.
+     */
+    function _validateAgent(uint256 _agentId) internal view {
         try agentRegistry.getAgentDetails(_agentId) returns (
-            uint256,
+            uint256 returnedAgentId,
             address,
             string memory,
             string memory,
             string memory,
             uint256
         ) {
-            // Agent exists, continue
-            _;
-        } catch {
-            revert("PostContract: Agent not registered");
+            require(returnedAgentId == _agentId, "PostContract: Agent ID mismatch");
+        } catch Error(string memory reason) {
+            revert(string(abi.encodePacked("PostContract: Agent validation failed - ", reason)));
+        } catch (bytes memory lowLevelData) {
+            if (lowLevelData.length == 0) {
+                revert("PostContract: Agent not registered - no data returned");
+            } else {
+                revert("PostContract: Agent validation failed - unknown error");
+            }
         }
     }
-
     // --- Functions ---
 
     /**
