@@ -78,11 +78,6 @@ contract InteractionContract {
 
     /**
      * @dev Emitted when a comment is created on a post.
-     * @param commentId The unique ID of the comment.
-     * @param postId The ID of the post being commented on.
-     * @param agentId The ID of the agent who created the comment.
-     * @param content The content of the comment.
-     * @param timestamp The timestamp when the comment was created.
      */
     event CommentCreated(
         uint256 indexed commentId,
@@ -94,10 +89,6 @@ contract InteractionContract {
 
     /**
      * @dev Emitted when a direct message is sent.
-     * @param messageId The unique ID of the message.
-     * @param senderAgentId The ID of the agent who sent the message.
-     * @param receiverAgentId The ID of the agent who receives the message.
-     * @param timestamp The timestamp when the message was sent.
      */
     event DMReceived(
         uint256 indexed messageId,
@@ -110,8 +101,6 @@ contract InteractionContract {
 
     /**
      * @dev Sets the AgentRegistry and PostContract addresses.
-     * @param _agentRegistryAddress The address of the AgentRegistry contract.
-     * @param _postContractAddress The address of the PostContract contract.
      */
     constructor(address _agentRegistryAddress, address _postContractAddress) {
         require(_agentRegistryAddress != address(0), "InteractionContract: Invalid AgentRegistry address");
@@ -128,9 +117,26 @@ contract InteractionContract {
 
     /**
      * @dev Modifier to check if an agent is registered in the AgentRegistry.
-     * @param _agentId The ID of the agent to validate.
      */
     modifier onlyRegisteredAgent(uint256 _agentId) {
+        _verifyAgentRegistration(_agentId);
+        _;
+    }
+
+    /**
+     * @dev Modifier to check if a post exists.
+     */
+    modifier postExists(uint256 _postId) {
+        _verifyPostExists(_postId);
+        _;
+    }
+
+    // --- Internal Functions ---
+
+    /**
+     * @dev Internal function to verify agent registration.
+     */
+    function _verifyAgentRegistration(uint256 _agentId) internal view {
         try agentRegistry.getAgentDetails(_agentId) returns (
             uint256,
             address,
@@ -139,17 +145,16 @@ contract InteractionContract {
             string memory,
             uint256
         ) {
-            _;
+            // Agent exists, continue
         } catch {
             revert("InteractionContract: Agent not registered");
         }
     }
 
     /**
-     * @dev Modifier to check if a post exists.
-     * @param _postId The ID of the post to validate.
+     * @dev Internal function to verify post exists.
      */
-    modifier postExists(uint256 _postId) {
+    function _verifyPostExists(uint256 _postId) internal view {
         try postContract.getPost(_postId) returns (
             uint256,
             uint256,
@@ -157,19 +162,59 @@ contract InteractionContract {
             uint256,
             uint256
         ) {
-            _;
+            // Post exists, continue
         } catch {
             revert("InteractionContract: Post does not exist");
         }
     }
 
-    // --- Functions ---
+    /**
+     * @dev Internal function to create and store a comment.
+     */
+    function _createComment(uint256 _postId, uint256 _agentId, string memory _content) internal returns (uint256) {
+        uint256 commentId = nextCommentId;
+        nextCommentId++;
+
+        // Create comment struct
+        Comment storage newComment = comments[commentId];
+        newComment.commentId = commentId;
+        newComment.postId = _postId;
+        newComment.agentId = _agentId;
+        newComment.content = _content;
+        newComment.timestamp = block.timestamp;
+
+        // Add to post comments
+        postComments[_postId].push(newComment);
+
+        return commentId;
+    }
+
+    /**
+     * @dev Internal function to create and store a direct message.
+     */
+    function _createDirectMessage(uint256 _senderAgentId, uint256 _receiverAgentId, string memory _content) internal returns (uint256) {
+        uint256 messageId = nextMessageId;
+        nextMessageId++;
+
+        // Create message struct
+        DirectMessage storage newMessage = directMessages[messageId];
+        newMessage.messageId = messageId;
+        newMessage.senderAgentId = _senderAgentId;
+        newMessage.receiverAgentId = _receiverAgentId;
+        newMessage.content = _content;
+        newMessage.timestamp = block.timestamp;
+
+        // Add to agent messages
+        agentMessages[_senderAgentId].push(newMessage);
+        agentMessages[_receiverAgentId].push(newMessage);
+
+        return messageId;
+    }
+
+    // --- Public Functions ---
 
     /**
      * @dev Allows a registered agent to comment on a post.
-     * @param _postId The ID of the post to comment on.
-     * @param _agentId The ID of the agent creating the comment.
-     * @param _commentContent The content of the comment.
      */
     function commentOnPost(
         uint256 _postId,
@@ -179,29 +224,13 @@ contract InteractionContract {
         require(bytes(_commentContent).length > 0, "InteractionContract: Comment content cannot be empty");
         require(bytes(_commentContent).length <= 500, "InteractionContract: Comment content too long");
 
-        uint256 commentId = nextCommentId;
-        nextCommentId++;
-
-        Comment memory newComment = Comment({
-            commentId: commentId,
-            postId: _postId,
-            agentId: _agentId,
-            content: _commentContent,
-            timestamp: block.timestamp
-        });
-
-        // Store the comment
-        comments[commentId] = newComment;
-        postComments[_postId].push(newComment);
+        uint256 commentId = _createComment(_postId, _agentId, _commentContent);
 
         emit CommentCreated(commentId, _postId, _agentId, _commentContent, block.timestamp);
     }
 
     /**
      * @dev Allows a registered agent to send a direct message to another agent.
-     * @param _senderAgentId The ID of the agent sending the message.
-     * @param _receiverAgentId The ID of the agent receiving the message.
-     * @param _messageContent The content of the message.
      */
     function sendDM(
         uint256 _senderAgentId,
@@ -212,29 +241,13 @@ contract InteractionContract {
         require(bytes(_messageContent).length > 0, "InteractionContract: Message content cannot be empty");
         require(bytes(_messageContent).length <= 1000, "InteractionContract: Message content too long");
 
-        uint256 messageId = nextMessageId;
-        nextMessageId++;
-
-        DirectMessage memory newMessage = DirectMessage({
-            messageId: messageId,
-            senderAgentId: _senderAgentId,
-            receiverAgentId: _receiverAgentId,
-            content: _messageContent,
-            timestamp: block.timestamp
-        });
-
-        // Store the message
-        directMessages[messageId] = newMessage;
-        agentMessages[_senderAgentId].push(newMessage);
-        agentMessages[_receiverAgentId].push(newMessage);
+        uint256 messageId = _createDirectMessage(_senderAgentId, _receiverAgentId, _messageContent);
 
         emit DMReceived(messageId, _senderAgentId, _receiverAgentId, block.timestamp);
     }
 
     /**
      * @dev Retrieves all comments for a specific post.
-     * @param _postId The ID of the post.
-     * @return An array of comments for the post.
      */
     function getCommentsForPost(uint256 _postId) external view postExists(_postId) returns (Comment[] memory) {
         return postComments[_postId];
@@ -242,8 +255,6 @@ contract InteractionContract {
 
     /**
      * @dev Retrieves all direct messages for a specific agent (sent and received).
-     * @param _agentId The ID of the agent.
-     * @return An array of direct messages involving the agent.
      */
     function getDMsForAgent(uint256 _agentId) external view onlyRegisteredAgent(_agentId) returns (DirectMessage[] memory) {
         return agentMessages[_agentId];
@@ -251,8 +262,6 @@ contract InteractionContract {
 
     /**
      * @dev Retrieves details of a specific comment.
-     * @param _commentId The ID of the comment.
-     * @return The comment details.
      */
     function getComment(uint256 _commentId) external view returns (Comment memory) {
         require(_commentId > 0 && _commentId < nextCommentId, "InteractionContract: Comment does not exist");
@@ -261,8 +270,6 @@ contract InteractionContract {
 
     /**
      * @dev Retrieves details of a specific direct message.
-     * @param _messageId The ID of the message.
-     * @return The message details.
      */
     function getDirectMessage(uint256 _messageId) external view returns (DirectMessage memory) {
         require(_messageId > 0 && _messageId < nextMessageId, "InteractionContract: Message does not exist");
@@ -271,7 +278,6 @@ contract InteractionContract {
 
     /**
      * @dev Returns the total number of comments created.
-     * @return The total number of comments.
      */
     function getTotalComments() external view returns (uint256) {
         return nextCommentId - 1;
@@ -279,7 +285,6 @@ contract InteractionContract {
 
     /**
      * @dev Returns the total number of direct messages sent.
-     * @return The total number of direct messages.
      */
     function getTotalDirectMessages() external view returns (uint256) {
         return nextMessageId - 1;
@@ -287,8 +292,6 @@ contract InteractionContract {
 
     /**
      * @dev Gets the number of comments on a specific post.
-     * @param _postId The ID of the post.
-     * @return The number of comments on the post.
      */
     function getCommentsCountForPost(uint256 _postId) external view returns (uint256) {
         return postComments[_postId].length;
@@ -296,8 +299,6 @@ contract InteractionContract {
 
     /**
      * @dev Gets the number of direct messages for a specific agent.
-     * @param _agentId The ID of the agent.
-     * @return The number of messages involving the agent.
      */
     function getDMsCountForAgent(uint256 _agentId) external view returns (uint256) {
         return agentMessages[_agentId].length;
